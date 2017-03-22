@@ -24,13 +24,16 @@ import numpy as np
 from madmom.features import Activations
 from madmom.features.chords import load_chords
 
-from . import AUDIO_PATH, ACTIVATIONS_PATH, DETECTIONS_PATH
+from . import AUDIO_PATH, ACTIVATIONS_PATH, ANNOTATIONS_PATH, DETECTIONS_PATH
 
 
 tmp_act = tempfile.NamedTemporaryFile(delete=False).name
 tmp_result = tempfile.NamedTemporaryFile(delete=False).name
 sample_file = pj(AUDIO_PATH, 'sample.wav')
 sample2_file = pj(AUDIO_PATH, 'sample2.wav')
+sample_file_22050 = pj(AUDIO_PATH, 'sample_22050.wav')
+sample_beat_annotations = pj(ANNOTATIONS_PATH, 'sample.beats')
+sample_beat_detections = pj(DETECTIONS_PATH, 'sample.dbn_beat_tracker.txt')
 stereo_sample_file = pj(AUDIO_PATH, 'stereo_sample.wav')
 program_path = os.path.dirname(os.path.realpath(__file__)) + '/../bin/'
 
@@ -67,6 +70,65 @@ def run_help(program):
 #       with pytest: http://pytest.org/latest/parametrize.html
 
 # TODO: can we speed up these tests?
+
+
+class TestBarTrackerProgram(unittest.TestCase):
+    def setUp(self):
+        self.bin = pj(program_path, "BarTracker")
+        self.result_ann = np.array([[0.091, 1], [0.8, 2], [1.481, 3],
+                                    [2.148, 1]])
+        self.result_det = np.array([[0.1, 1], [0.45, 2], [0.8, 3], [1.12, 1],
+                                    [1.48, 2], [1.8, 3], [2.15, 1], [2.49, 2]])
+        self.result_down = self.result_ann[self.result_ann[:, 1] == 1][:, 0]
+
+    def test_run(self):
+        # with beat detections
+        run_program([self.bin, '--beats', sample_beat_detections, 'single',
+                     sample_file, '-o', tmp_result])
+        result = np.loadtxt(tmp_result)
+        self.assertTrue(np.allclose(result, self.result_det))
+        # check 22050 Hz sample rate
+        run_program([self.bin, '--beats', sample_beat_detections, 'single',
+                     sample_file_22050, '-o', tmp_result])
+        result = np.loadtxt(tmp_result)
+        self.assertTrue(np.allclose(result, self.result_det))
+        # run using beat annotations
+        run_program([self.bin, '--beats', sample_beat_annotations, 'single',
+                     sample_file, '-o', tmp_result])
+        result = np.loadtxt(tmp_result)
+        self.assertTrue(np.allclose(result, self.result_ann))
+
+    def test_batch(self):
+        # run using beat annotations in batch mode
+        run_program([self.bin, '--beats_suffix', '.dbn_beat_tracker.txt',
+                     'batch', sample_file, sample_beat_detections])
+        # detections got stored into the audio folder, thus remove that file
+        result_file = pj(AUDIO_PATH, 'sample.beats.txt')
+        result = np.loadtxt(result_file)
+        os.unlink(result_file)
+        self.assertTrue(np.allclose(result, self.result_det))
+
+    def test_output_downbeats(self):
+        run_program([self.bin, '--down', '--beats', sample_beat_annotations,
+                     'single', sample_file, '-o', tmp_result])
+        result = np.loadtxt(tmp_result)
+        self.assertTrue(np.allclose(result, self.result_down))
+
+    # def save_load_rnn_activations(self):
+    #     # save RNN activations and beat times
+    #     run_program([self.bin, '--save', 'single', '-o', tmp_act,
+    #                  sample_file])
+    #     data = np.load(tmp_act)
+    #     acts = [0.37781784, 0.18954057, 0.11194395, 0.32766795, 0.2700946,
+    #             0.18147217, 0.16246837]
+    #     self.assertTrue(np.allclose(data['activations'], acts))
+    #     beats = [0.1, 0.45, 0.8, 1.12, 1.48, 1.8, 2.15, 2.49]
+    #     self.assertTrue(np.allclose(data['beats'], beats))
+    #     # load RNN activations and beat times
+    #     run_program([self.bin, '--load', 'single', '-o', tmp_result,
+    #                  tmp_act])
+    #     result = np.loadtxt(tmp_result)
+    #     self.assertTrue(np.allclose(result, self.result_det))
 
 
 class TestBeatDetectorProgram(unittest.TestCase):
