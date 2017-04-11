@@ -19,6 +19,7 @@ Bug fixes:
 API relevant changes:
 
 * `DBNBeatTrackingProcessor` expects 1D inputs (#299)
+* Moved downbeat and pattern tracking to `features.downbeats` (#316)
 
 Other changes:
 
