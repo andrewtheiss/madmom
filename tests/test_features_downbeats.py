@@ -184,27 +184,29 @@ class TestRNNBarProcessorClass(unittest.TestCase):
         self.processor = RNNBarProcessor(fps=100)
 
     def test_process(self):
-        beats, act = self.processor((sample_file, sample_beats))
-        self.assertTrue(np.allclose(act, [0.48194462, 0.12625194, 0.1980453],
-                                    rtol=1e-3))
+        act = self.processor((sample_file, sample_beats[:, 0]))
+        self.assertTrue(np.allclose(act, [[0.0913, 0.48194462],
+                                          [0.7997, 0.12625194],
+                                          [1.4806, 0.1980453],
+                                          [2.1478, np.nan]],
+                                    rtol=1e-3, equal_nan=True))
 
 
 class TestDBNBarProcessorRNNClass(unittest.TestCase):
 
     def setUp(self):
         self.processor = DBNBarTrackingProcessor()
-        self.rnn_outout = np.array([0.4819403, 0.1262536, 0.1980488])
+        self.rnn_outout = np.array([0.4819403, 0.1262536, 0.1980488, np.nan])
         self.dbn_outout = np.array([[0.0913, 1.], [0.7997, 2.], [1.4806, 3.],
                                     [2.1478, 1.]])
 
     def test_dbn(self):
         # check DBN output
-        path, log = self.processor.hmm.viterbi(self.rnn_outout)
+        path, log = self.processor.hmm.viterbi(self.rnn_outout[:-1])
         self.assertTrue(np.allclose(path, [0, 1, 2]))
         self.assertTrue(np.allclose(log, -12.2217575073))
 
     def test_process(self):
-        beats = self.processor([sample_beats[:, 0], self.rnn_outout])
+        act = np.vstack((sample_beats[:, 0], self.rnn_outout)).T
+        beats = self.processor(act)
         self.assertTrue(np.allclose(beats, self.dbn_outout))
-        beats = self.processor([np.empty(0), self.rnn_outout])
-        self.assertTrue(np.allclose(beats, np.empty((0, 2))))
