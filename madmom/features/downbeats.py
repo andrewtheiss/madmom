@@ -1113,7 +1113,7 @@ class DBNBarTrackingProcessor(Processor):
         #       existing MultiPatternStateSpace and MultiPatternTransitionModel
         self.st = MultiPatternStateSpace(state_spaces)
         self.tm = MultiPatternTransitionModel(
-            transition_models, pattern_change_prob=meter_change_prob)
+            transition_models, transition_prob=meter_change_prob)
         # observation model
         self.om = RNNBeatTrackingObservationModel(self.st, observation_weight)
         # instantiate a HMM

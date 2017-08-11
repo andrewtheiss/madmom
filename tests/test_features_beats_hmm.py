@@ -299,9 +299,7 @@ class TestMultiPatternTransitionModelClass(unittest.TestCase):
         self.assertIsInstance(tm, MultiPatternTransitionModel)
         self.assertIsInstance(tm, TransitionModel)
         self.assertIsInstance(tm.transition_models, list)
-        # right now, transition_lambda and transition_prob are None
-        self.assertIsNone(tm.transition_lambda)
-        self.assertIsNone(tm.transition_prob)
+        self.assertIsInstance(tm.transition_prob, float)
         self.assertIsInstance(tm.states, np.ndarray)
         self.assertIsInstance(tm.pointers, np.ndarray)
         self.assertIsInstance(tm.probabilities, np.ndarray)

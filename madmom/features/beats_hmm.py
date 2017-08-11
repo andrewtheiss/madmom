@@ -403,32 +403,21 @@ class MultiPatternTransitionModel(TransitionModel):
     ----------
     transition_models : list
         List with :class:`TransitionModel` instances.
-    transition_prob : numpy array, optional
-        Matrix with transition probabilities from one pattern to another.
-    transition_lambda : float, optional
-        Lambda for the exponential tempo change distribution (higher values
-        prefer a constant tempo from one pattern to the next one).
-    pattern_change_prob : float, optional
-        Probability of a pattern change. With pattern_change_prob - 1 we
-        maintain the old pattern.
-
+    transition_prob : float, optional
+        Probability to change the pattern at pattern boundaries. A uniform
+        transition distribution to all other patterns is assumed. Set to 0
+        to stay within a single pattern.
 
     """
 
-    def __init__(self, transition_models, transition_prob=None,
-                 transition_lambda=None, pattern_change_prob=0.0):
-        # TODO: use transition_prob to set different pattern change
-        # probabilities
-        if transition_prob is not None or transition_lambda is not None:
-            raise NotImplementedError("please implement pattern transitions")
+    def __init__(self, transition_models, transition_prob=0.):
         # save attributes
         self.transition_models = transition_models
         self.transition_prob = transition_prob
-        self.transition_lambda = transition_lambda
         num_patterns = len(self.transition_models)
         first_pattern_states = np.zeros(num_patterns, dtype=int)
         last_pattern_states = np.zeros(num_patterns, dtype=int)
-        # stack the pattern transitions
+        # first stack all transition models
         for i, tm in enumerate(self.transition_models):
             # set/update the probabilities, states and pointers
             if i == 0:
@@ -454,15 +443,20 @@ class MultiPatternTransitionModel(TransitionModel):
                                       max(pointers)))
                 # probabilities: just stack them
                 probabilities = np.hstack((probabilities, tm.probabilities))
-
+        # retrieve a dense representation in order to add transitions
         states, prev_states, probabilities = self.make_dense(states, pointers,
                                                              probabilities)
-        # add pattern_transitions
-        if pattern_change_prob > 0 and num_patterns > 1:
-            same_pattern = 1 - pattern_change_prob
-            change_pattern = pattern_change_prob / (num_patterns - 1)
+        # add transitions between patterns
+        if transition_prob and num_patterns > 1:
+            # TODO: support matrices to set different transition probabilities
+            if not isinstance(transition_prob, float):
+                raise NotImplementedError(
+                    'Only float transition probabilities supported, not %s.'
+                    % type(transition_prob))
+            same_pattern = 1. - transition_prob
+            change_pattern = transition_prob / (num_patterns - 1)
             for i in range(num_patterns):
-                # find states at pattern borders
+                # update transitions to same pattern with new probability
                 idx = np.intersect1d(
                     np.where(prev_states == last_pattern_states[i])[0],
                     np.where(states == first_pattern_states[i])[0])
@@ -475,7 +469,6 @@ class MultiPatternTransitionModel(TransitionModel):
                         states = np.hstack((states, first_pattern_states[j]))
                         probabilities = np.hstack((probabilities,
                                                    change_pattern))
-
         # make the transitions sparse
         transitions = self.make_sparse(states, prev_states, probabilities)
         # instantiate a TransitionModel
