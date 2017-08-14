@@ -404,25 +404,28 @@ class MultiPatternTransitionModel(TransitionModel):
     ----------
     transition_models : list
         List with :class:`TransitionModel` instances.
-    transition_prob : float, optional
-        Probability to change the pattern at pattern boundaries. A uniform
-        transition distribution to all other patterns is assumed. Set to 0
-        to stay within a single pattern.
+    transition_prob : numpy array or float, optional
+        Probabilities to change the pattern at pattern boundaries. If an array
+        is given, the first dimension corresponds to the origin pattern, the
+        second to the destination pattern. If a single value is given, a
+        uniform transition distribution to all other patterns is assumed. Set
+        to None to stay within the same pattern.
 
     """
 
-    def __init__(self, transition_models, transition_prob=0.):
+    def __init__(self, transition_models, transition_prob=None):
         # save attributes
         self.transition_models = transition_models
         self.transition_prob = transition_prob
+        num_patterns = len(transition_models)
         # first stack all transition models
         first_states = []
         last_states = []
-        for i, tm in enumerate(self.transition_models):
+        for frm, tm in enumerate(self.transition_models):
             # set/update the probabilities, states and pointers
             offset = 0
-            if i == 0:
-                # for the first pattern, just set the TM arrays
+            if frm == 0:
+                # for the first pattern, just use the TM arrays
                 states = tm.states
                 pointers = tm.pointers
                 probabilities = tm.probabilities
@@ -447,42 +450,45 @@ class MultiPatternTransitionModel(TransitionModel):
         # retrieve a dense representation in order to add transitions
         states, prev_states, probabilities = self.make_dense(states, pointers,
                                                              probabilities)
-        num_patterns = len(transition_models)
-        # add transitions between patterns
-        if transition_prob and num_patterns > 1:
-            # TODO: support matrices to set different transition probabilities
-            if not isinstance(transition_prob, float):
-                raise NotImplementedError(
-                    'Only float transition probabilities supported, not %s.'
-                    % type(transition_prob))
-            same_pattern = 1. - transition_prob
-            change_pattern = transition_prob / (num_patterns - 1)
+        # translate float transition_prob value to transition_prob matrix
+        if isinstance(transition_prob, float) and transition_prob:
+            # create a pattern transition probability matrix
+            self.transition_prob = np.ones((num_patterns, num_patterns))
+            # transition to other patterns
+            self.transition_prob *= transition_prob / (num_patterns - 1)
+            # transition to same pattern
+            diag = np.diag_indices_from(self.transition_prob)
+            self.transition_prob[diag] = 1. - transition_prob
+        else:
+            self.transition_prob = transition_prob
+        # update/add transitions between patterns
+        if self.transition_prob is not None and num_patterns > 1:
             new_states = []
             new_prev_states = []
             new_probabilities = []
-            for i in range(num_patterns):
+            for frm in range(num_patterns):
                 # indices of states/prev_states/probabilities
-                idx = np.logical_and(np.in1d(prev_states, last_states[i]),
-                                     np.in1d(states, first_states[i]))
+                idx = np.logical_and(np.in1d(prev_states, last_states[frm]),
+                                     np.in1d(states, first_states[frm]))
                 # transition probability
                 prob = probabilities[idx]
                 # update transitions to same pattern with new probability
-                probabilities[idx] *= same_pattern
+                probabilities[idx] *= self.transition_prob[frm, frm]
                 # distribute that part among all other patterns
-                for j in range(num_patterns):
-                    if i != j:
-                        idx_ = np.logical_and(
-                            np.in1d(prev_states, last_states[j]),
-                            np.in1d(states, first_states[j]))
-                        # make sure idx and idx_ have same length
-                        if len(np.nonzero(idx)[0]) != len(np.nonzero(idx_)[0]):
-                            raise ValueError('Cannot add transition between '
-                                             'patterns with different number '
-                                             'of tempo states.')
-                        # use idx for the states and idx_ for prev_states
-                        new_states.extend(states[idx])
-                        new_prev_states.extend(prev_states[idx_])
-                        new_probabilities.extend(prob * change_pattern)
+                for to in np.setdiff1d(range(num_patterns), frm):
+                    idx_ = np.logical_and(
+                        np.in1d(prev_states, last_states[to]),
+                        np.in1d(states, first_states[to]))
+                    # make sure idx and idx_ have same length
+                    if len(np.nonzero(idx)[0]) != len(np.nonzero(idx_)[0]):
+                        raise ValueError('Cannot add transition between '
+                                         'patterns with different number of '
+                                         'tempo states.')
+                    # use idx for the states and idx_ for prev_states
+                    new_states.extend(states[idx])
+                    new_prev_states.extend(prev_states[idx_])
+                    new_probabilities.extend(prob *
+                                             self.transition_prob[frm, to])
             # extend the arrays by these new transitions
             states = np.append(states, new_states)
             prev_states = np.append(prev_states, new_prev_states)

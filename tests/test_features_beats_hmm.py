@@ -299,7 +299,7 @@ class TestMultiPatternTransitionModelClass(unittest.TestCase):
         self.assertIsInstance(tm, MultiPatternTransitionModel)
         self.assertIsInstance(tm, TransitionModel)
         self.assertIsInstance(tm.transition_models, list)
-        self.assertIsInstance(tm.transition_prob, float)
+        self.assertIsNone(tm.transition_prob)
         self.assertIsInstance(tm.states, np.ndarray)
         self.assertIsInstance(tm.pointers, np.ndarray)
         self.assertIsInstance(tm.probabilities, np.ndarray)
@@ -401,6 +401,7 @@ class TestMultiPatternTransitionModelClass(unittest.TestCase):
         btm1 = BarTransitionModel(bss1, 100)
         btm2 = BarTransitionModel(bss2, 100)
         tm = MultiPatternTransitionModel([btm1, btm2], transition_prob=0.25)
+        self.assertIsInstance(tm.transition_prob, np.ndarray)
         self.assertTrue(tm.num_states == 5)
         self.assertTrue(tm.num_transitions == 7)
         self.assertTrue(np.allclose(tm.states, [1, 4, 0, 1, 4, 2, 3]))
@@ -415,8 +416,12 @@ class TestMultiPatternTransitionModelClass(unittest.TestCase):
         # same with 3 bar lengths
         bss3 = BarStateSpace(4, 1, 1)  # states 5678
         btm3 = BarTransitionModel(bss3, 100)
+        trans = np.array([[0.6, 0.3, 0.25],
+                          [0.15, 0.6, 0.15],
+                          [0.25, 0.1, 0.6]])
         tm = MultiPatternTransitionModel([btm1, btm2, btm3],
-                                         transition_prob=0.4)
+                                         transition_prob=trans)
+        self.assertIsInstance(tm.transition_prob, np.ndarray)
         self.assertTrue(tm.num_states == 9)
         self.assertTrue(tm.num_transitions == 15)
         self.assertTrue(np.allclose(tm.states, [1, 4, 8, 0, 1, 4, 8, 2, 3, 1,
@@ -424,16 +429,16 @@ class TestMultiPatternTransitionModelClass(unittest.TestCase):
         self.assertTrue(np.allclose(tm.pointers, [0, 3, 4, 7, 8, 9, 12, 13,
                                                   14, 15]))
         self.assertTrue(np.allclose(tm.probabilities,
-                                    [0.6, 0.2, 0.2, 1, 0.2, 0.6, 0.2, 1, 1,
-                                     0.2, 0.2, 0.6, 1, 1, 1]))
+                                    [0.6, 0.3, 0.25, 1, 0.15, 0.6, 0.15, 1, 1,
+                                     0.25, 0.1, 0.6, 1, 1, 1]))
         states, prev_states, probs = tm.make_dense(tm.states, tm.pointers,
                                                    tm.probabilities)
         self.assertTrue(np.allclose(prev_states, [1, 4, 8, 0, 1, 4, 8, 2, 3,
                                                   1, 4, 8, 5, 6, 7]))
         self.assertTrue(np.allclose(states, [0, 0, 0, 1, 2, 2, 2, 3, 4,
                                              5, 5, 5, 6, 7, 8]))
-        self.assertTrue(np.allclose(probs, [0.6, 0.2, 0.2, 1, 0.2, 0.6, 0.2,
-                                            1, 1, 0.2, 0.2, 0.6, 1, 1, 1]))
+        self.assertTrue(np.allclose(probs, [0.6, 0.3, 0.25, 1, 0.15, 0.6, 0.15,
+                                            1, 1, 0.25, 0.1, 0.6, 1, 1, 1]))
 
 
 # observation models
