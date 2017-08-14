@@ -186,30 +186,31 @@ class MultiPatternStateSpace(object):
     """
 
     def __init__(self, state_spaces):
+        # model the given state spaces as patterns and combine them i a
+        # single state space
+        self.num_patterns = len(state_spaces)
         self.state_spaces = state_spaces
-        # model the patterns as a whole
-        self.num_patterns = len(self.state_spaces)
         self.state_positions = np.empty(0)
         self.state_intervals = np.empty(0, dtype=np.uint32)
         self.state_patterns = np.empty(0, dtype=np.uint32)
         self.num_states = 0
         # save the first and last states of the individual patterns in a list
-        # self.first_states = []
-        # self.last_states = []
-        for p in range(self.num_patterns):
-            pattern = self.state_spaces[p]
+        self.first_states = []
+        self.last_states = []
+        # simply stack the individual state spaces
+        for p, pss in enumerate(state_spaces):
             # define position, interval and pattern states
             self.state_positions = np.hstack((self.state_positions,
-                                              pattern.state_positions))
+                                              pss.state_positions))
             self.state_intervals = np.hstack((self.state_intervals,
-                                              pattern.state_intervals))
+                                              pss.state_intervals))
             self.state_patterns = np.hstack((self.state_patterns,
-                                             np.repeat(p, pattern.num_states)))
-            # TODO: first and last states should both be lists to work easily
-            # self.first_states.append()
-            # self.last_states.append()
+                                             np.repeat(p, pss.num_states)))
+            # append the first and last states of each pattern
+            self.first_states.append(pss.first_states[0] + self.num_states)
+            self.last_states.append(pss.last_states[-1] + self.num_states)
             # finally increase the number of states
-            self.num_states += pattern.num_states
+            self.num_states += pss.num_states
 
 
 # transition distributions
@@ -252,7 +253,8 @@ def exponential_transition(from_intervals, to_intervals, transition_lambda,
         return np.diag(np.diag(np.ones((len(from_intervals),
                                         len(to_intervals)))))
     # compute the transition probabilities
-    ratio = to_intervals / from_intervals[:, np.newaxis]
+    ratio = (to_intervals.astype(np.float) /
+             from_intervals.astype(np.float)[:, np.newaxis])
     prob = np.exp(-transition_lambda * abs(ratio - 1.))
     # set values below threshold to 0
     prob[prob <= threshold] = 0
@@ -305,8 +307,8 @@ class BeatTransitionModel(TransitionModel):
         #       transition (with the tempi given as intervals)
         to_states = state_space.first_states
         from_states = state_space.last_states
-        from_int = state_space.state_intervals[from_states].astype(np.float)
-        to_int = state_space.state_intervals[to_states].astype(np.float)
+        from_int = state_space.state_intervals[from_states]
+        to_int = state_space.state_intervals[to_states]
         prob = exponential_transition(from_int, to_int, self.transition_lambda)
         # use only the states with transitions to/from != 0
         from_prob, to_prob = np.nonzero(prob)
@@ -381,8 +383,7 @@ class BarTransitionModel(TransitionModel):
             # transition follow an exponential tempo distribution
             from_int = state_space.state_intervals[from_states]
             to_int = state_space.state_intervals[to_states]
-            prob = exponential_transition(from_int.astype(np.float),
-                                          to_int.astype(np.float),
+            prob = exponential_transition(from_int, to_int,
                                           transition_lambda[beat])
             # use only the states with transitions to/from != 0
             from_prob, to_prob = np.nonzero(prob)
@@ -414,27 +415,24 @@ class MultiPatternTransitionModel(TransitionModel):
         # save attributes
         self.transition_models = transition_models
         self.transition_prob = transition_prob
-        num_patterns = len(self.transition_models)
-        first_pattern_states = np.zeros(num_patterns, dtype=int)
-        last_pattern_states = np.zeros(num_patterns, dtype=int)
         # first stack all transition models
+        first_states = []
+        last_states = []
         for i, tm in enumerate(self.transition_models):
             # set/update the probabilities, states and pointers
+            offset = 0
             if i == 0:
                 # for the first pattern, just set the TM arrays
                 states = tm.states
                 pointers = tm.pointers
                 probabilities = tm.probabilities
-                first_pattern_states[i] = 0
-                last_pattern_states[i] = tm.num_states - 1
             else:
-                first_pattern_states[i] = len(pointers) - 1
-                last_pattern_states[i] = first_pattern_states[i] + \
-                    tm.num_states - 1
+
                 # for all consecutive patterns, stack the TM arrays after
                 # applying an offset
                 # Note: len(pointers) = len(states) + 1, because of the CSR
                 #       format of the TM (please see ml.hmm.TransitionModel)
+                offset = len(pointers) - 1
                 # states: offset = length of the pointers - 1
                 states = np.hstack((states, tm.states + len(pointers) - 1))
                 # pointers: offset = current maximum of the pointers
@@ -443,9 +441,13 @@ class MultiPatternTransitionModel(TransitionModel):
                                       max(pointers)))
                 # probabilities: just stack them
                 probabilities = np.hstack((probabilities, tm.probabilities))
+            # save the first/last states
+            first_states.append(tm.state_space.first_states[0] + offset)
+            last_states.append(tm.state_space.last_states[-1] + offset)
         # retrieve a dense representation in order to add transitions
         states, prev_states, probabilities = self.make_dense(states, pointers,
                                                              probabilities)
+        num_patterns = len(transition_models)
         # add transitions between patterns
         if transition_prob and num_patterns > 1:
             # TODO: support matrices to set different transition probabilities
@@ -455,20 +457,36 @@ class MultiPatternTransitionModel(TransitionModel):
                     % type(transition_prob))
             same_pattern = 1. - transition_prob
             change_pattern = transition_prob / (num_patterns - 1)
+            new_states = []
+            new_prev_states = []
+            new_probabilities = []
             for i in range(num_patterns):
+                # indices of states/prev_states/probabilities
+                idx = np.logical_and(np.in1d(prev_states, last_states[i]),
+                                     np.in1d(states, first_states[i]))
+                # transition probability
+                prob = probabilities[idx]
                 # update transitions to same pattern with new probability
-                idx = np.intersect1d(
-                    np.where(prev_states == last_pattern_states[i])[0],
-                    np.where(states == first_pattern_states[i])[0])
-                probabilities[idx] = same_pattern
-                # add pattern transition
+                probabilities[idx] *= same_pattern
+                # distribute that part among all other patterns
                 for j in range(num_patterns):
                     if i != j:
-                        prev_states = np.hstack((prev_states,
-                                                 last_pattern_states[i]))
-                        states = np.hstack((states, first_pattern_states[j]))
-                        probabilities = np.hstack((probabilities,
-                                                   change_pattern))
+                        idx_ = np.logical_and(
+                            np.in1d(prev_states, last_states[j]),
+                            np.in1d(states, first_states[j]))
+                        # make sure idx and idx_ have same length
+                        if len(np.nonzero(idx)[0]) != len(np.nonzero(idx_)[0]):
+                            raise ValueError('Cannot add transition between '
+                                             'patterns with different number '
+                                             'of tempo states.')
+                        # use idx for the states and idx_ for prev_states
+                        new_states.extend(states[idx])
+                        new_prev_states.extend(prev_states[idx_])
+                        new_probabilities.extend(prob * change_pattern)
+            # extend the arrays by these new transitions
+            states = np.append(states, new_states)
+            prev_states = np.append(prev_states, new_prev_states)
+            probabilities = np.append(probabilities, new_probabilities)
         # make the transitions sparse
         transitions = self.make_sparse(states, prev_states, probabilities)
         # instantiate a TransitionModel
@@ -635,6 +653,8 @@ class GMMPatternTrackingObservationModel(ObservationModel):
             # number of fitted GMMs for this pattern
             num_gmms = len(gmms)
             # number of beats in this pattern
+            # TODO: save the number of beats in the pattern files so we don't
+            #       need to save references to all state spaces
             num_beats = self.state_space.state_spaces[p].num_beats
             # distribute the observation densities defined by the GMMs
             # uniformly across the entire state space (for this pattern)
